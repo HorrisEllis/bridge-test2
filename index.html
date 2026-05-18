@@ -29,58 +29,32 @@ a:hover{text-decoration:underline}
  * Bridge OS — Phantom Relay Node
  * github.com/HorrisEllis/Bridge-v2
  *
- * WHAT THIS IS:
- *   A silent relay node hosted on GitHub Pages.
- *   Externally it appears to be a 404 page.
- *   Internally it registers a Service Worker that intercepts
- *   Bridge relay requests and forwards them through the phantom chain.
- *
- * HOW IT WORKS:
- *   1. Visitor (or Bridge node) loads this page
- *   2. Service Worker registers silently
- *   3. Bridge relay requests hit /__relay/* on this origin
- *   4. Service Worker intercepts, decodes steg payload, forwards
- *   5. Response re-encoded and returned
- *   6. Caller's IP never reaches the destination
- *
- * TO THE NETWORK:
- *   HTTPS to github.io — looks like a CDN fetch
- *   No VPN fingerprint. No proxy headers. No unusual ports.
- *   GitHub CDN IP in every hop.
- *
- * RELAY PROTOCOL:
- *   POST /__relay/forward
- *   Headers:
- *     X-B-Hop:     current hop number (1-indexed)
- *     X-B-Total:   total hops in circuit
- *     X-B-Next:    base64(next relay URL) — empty if exit hop
- *     X-B-Sig:     HMAC-SHA256 of payload (circuit key)
- *     X-B-Nonce:   random 16 bytes hex — replay protection
- *     Content-Type: application/octet-stream
- *   Body: AES-256-GCM encrypted payload (bridge-steg encoded)
- *
- *   Response: same format, re-encrypted for caller
- *
- * SECURITY PROPERTIES:
- *   - Each relay sees only its predecessor IP (GitHub CDN)
- *   - Payload encrypted end-to-end — relay cannot read content
- *   - Nonce prevents replay attacks
- *   - Circuit key derived per-session — not stored anywhere
- *   - No logging — Service Worker state is ephemeral
- *   - HMAC verification — relay rejects tampered payloads
+ * Externally appears to be a 404 page.
+ * Service Worker intercepts Bridge relay requests silently.
  */
 
 (async () => {
   if (!('serviceWorker' in navigator)) return;
 
-  // ── Register Service Worker ─────────────────────────────────────────────────
+  // Derive the base path dynamically so this works whether the site is
+  // served from the repo root (user/org page: /) or a project subdirectory
+  // (project page: /repo-name/).
+  // e.g. https://horrisellis.github.io/bridge-test2/ → basePath = '/bridge-test2'
+  const basePath = location.pathname.replace(/\/$/, '').replace(/\/[^/]*$/, '') || '';
+  // If served from /relay subfolder of the repo (GitHub Pages source = /relay),
+  // the pathname here will just be '/bridge-test2/' — basePath = '/bridge-test2'
+  // SW file is at same level: __relay-sw.js → relative path works fine.
+
   try {
-    const reg = await navigator.serviceWorker.register('/__relay-sw.js', {
-      scope: '/',
+    const swUrl   = '__relay-sw.js';           // relative — same directory as this page
+    const swScope = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
+
+    const reg = await navigator.serviceWorker.register(swUrl, {
+      scope:          swScope,
       updateViaCache: 'none',
     });
 
-    // Force activate immediately — don't wait for old SW to die
+    // Force activate immediately
     if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
 
     reg.addEventListener('updatefound', () => {
@@ -96,26 +70,24 @@ a:hover{text-decoration:underline}
     // Silent — relay degrades gracefully
   }
 
-  // ── Announce relay availability to Bridge network ───────────────────────────
-  // If a Bridge node loaded this page via iframe or fetch ping,
-  // signal back that this relay is alive and ready.
+  // Announce relay availability to Bridge network
   if (window.parent !== window) {
     try {
       window.parent.postMessage({
         type:    'BRIDGE_RELAY_READY',
-        relay:   window.location.origin,
+        relay:   window.location.origin + (location.pathname.replace(/\/$/, '')),
         version: '1.0.0',
         hops:    ['/__relay/forward'],
       }, '*');
     } catch {}
   }
 
-  // Also signal via BroadcastChannel if available
   try {
     const bc = new BroadcastChannel('bridge-relay-announce');
     bc.postMessage({
       type:   'RELAY_ALIVE',
       origin: window.location.origin,
+      path:   location.pathname.replace(/\/$/, ''),
       ts:     Date.now(),
     });
     bc.close();
@@ -124,8 +96,6 @@ a:hover{text-decoration:underline}
 })();
 </script>
 
-<!-- Service Worker is registered by the script above.
-     The actual relay logic lives in /__relay-sw.js (see relay-sw.js).
-     This page exists only to load the SW and show a decoy 404. -->
+<!-- Service Worker registered above. Relay logic in __relay-sw.js -->
 </body>
 </html>
