@@ -1,0 +1,19 @@
+# Bridge OS GitHub Pages Relay Configuration
+# This file enables GitHub Pages deployment for the relay node.
+# The relay serves from the /relay directory.
+#
+# To deploy a relay:
+#   1. Fork or clone Bridge-v2
+#   2. Enable GitHub Pages in repo Settings → Pages → Source: main branch /relay folder
+#   3. Your relay URL: https://<your-username>.github.io/<repo-name>
+#   4. Add to Bridge phantom pool: bridge-relay add https://<your-username>.github.io/<repo-name>
+#   5. Share magnet link: nexus://<nodeId>?relay=https://<your-username>.github.io/<repo-name>
+#
+# The relay page (index.html) shows a decoy 404.
+# The Service Worker (relay-sw.js) handles /__relay/forward silently.
+# No server required. No cost. GitHub CDN handles everything.
+
+theme: null
+
+# Serve from relay directory
+# (set in GitHub Pages settings: Source → /relay folder)

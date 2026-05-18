@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
+<meta name="referrer" content="no-referrer">
+<title>404 — Page Not Found</title>
+<style>
+/* Looks like a boring 404 to anyone who visits directly */
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#fff;color:#333;font:14px/1.6 -apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
+.wrap{max-width:480px;padding:40px 20px}
+h1{font-size:48px;font-weight:300;color:#999;margin-bottom:8px}
+p{color:#999;font-size:14px}
+a{color:#0070f3;text-decoration:none}
+a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>404</h1>
+  <p>This page does not exist.</p>
+  <p style="margin-top:8px"><a href="/">Go home</a></p>
+</div>
+
+<script>
+/**
+ * Bridge OS — Phantom Relay Node
+ * github.com/HorrisEllis/Bridge-v2
+ *
+ * WHAT THIS IS:
+ *   A silent relay node hosted on GitHub Pages.
+ *   Externally it appears to be a 404 page.
+ *   Internally it registers a Service Worker that intercepts
+ *   Bridge relay requests and forwards them through the phantom chain.
+ *
+ * HOW IT WORKS:
+ *   1. Visitor (or Bridge node) loads this page
+ *   2. Service Worker registers silently
+ *   3. Bridge relay requests hit /__relay/* on this origin
+ *   4. Service Worker intercepts, decodes steg payload, forwards
+ *   5. Response re-encoded and returned
+ *   6. Caller's IP never reaches the destination
+ *
+ * TO THE NETWORK:
+ *   HTTPS to github.io — looks like a CDN fetch
+ *   No VPN fingerprint. No proxy headers. No unusual ports.
+ *   GitHub CDN IP in every hop.
+ *
+ * RELAY PROTOCOL:
+ *   POST /__relay/forward
+ *   Headers:
+ *     X-B-Hop:     current hop number (1-indexed)
+ *     X-B-Total:   total hops in circuit
+ *     X-B-Next:    base64(next relay URL) — empty if exit hop
+ *     X-B-Sig:     HMAC-SHA256 of payload (circuit key)
+ *     X-B-Nonce:   random 16 bytes hex — replay protection
+ *     Content-Type: application/octet-stream
+ *   Body: AES-256-GCM encrypted payload (bridge-steg encoded)
+ *
+ *   Response: same format, re-encrypted for caller
+ *
+ * SECURITY PROPERTIES:
+ *   - Each relay sees only its predecessor IP (GitHub CDN)
+ *   - Payload encrypted end-to-end — relay cannot read content
+ *   - Nonce prevents replay attacks
+ *   - Circuit key derived per-session — not stored anywhere
+ *   - No logging — Service Worker state is ephemeral
+ *   - HMAC verification — relay rejects tampered payloads
+ */
+
+(async () => {
+  if (!('serviceWorker' in navigator)) return;
+
+  // ── Register Service Worker ─────────────────────────────────────────────────
+  try {
+    const reg = await navigator.serviceWorker.register('/__relay-sw.js', {
+      scope: '/',
+      updateViaCache: 'none',
+    });
+
+    // Force activate immediately — don't wait for old SW to die
+    if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+
+    reg.addEventListener('updatefound', () => {
+      const sw = reg.installing;
+      if (sw) sw.addEventListener('statechange', () => {
+        if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+          sw.postMessage({ type: 'SKIP_WAITING' });
+        }
+      });
+    });
+
+  } catch (e) {
+    // Silent — relay degrades gracefully
+  }
+
+  // ── Announce relay availability to Bridge network ───────────────────────────
+  // If a Bridge node loaded this page via iframe or fetch ping,
+  // signal back that this relay is alive and ready.
+  if (window.parent !== window) {
+    try {
+      window.parent.postMessage({
+        type:    'BRIDGE_RELAY_READY',
+        relay:   window.location.origin,
+        version: '1.0.0',
+        hops:    ['/__relay/forward'],
+      }, '*');
+    } catch {}
+  }
+
+  // Also signal via BroadcastChannel if available
+  try {
+    const bc = new BroadcastChannel('bridge-relay-announce');
+    bc.postMessage({
+      type:   'RELAY_ALIVE',
+      origin: window.location.origin,
+      ts:     Date.now(),
+    });
+    bc.close();
+  } catch {}
+
+})();
+</script>
+
+<!-- Service Worker is registered by the script above.
+     The actual relay logic lives in /__relay-sw.js (see relay-sw.js).
+     This page exists only to load the SW and show a decoy 404. -->
+</body>
+</html>
